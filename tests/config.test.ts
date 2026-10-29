@@ -61,9 +61,11 @@ test("config.example.json stays identical to DEFAULT_CONFIG", async () => {
 	assert.deepEqual(example, DEFAULT_CONFIG);
 });
 
-test("package metadata declares the supported Unix platforms", async () => {
+test("package metadata declares the supported platforms", async () => {
 	const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-	assert.deepEqual(packageJson.os, ["darwin", "linux", "android"]);
+	assert.deepEqual(packageJson.os, ["darwin", "linux", "win32", "android"]);
+	assert.equal(packageJson.cpu, undefined);
+	assert.equal(packageJson.engines.node, ">=22.19.0");
 });
 
 test("parseConfig accepts large safe integers without field-specific maxima", () => {

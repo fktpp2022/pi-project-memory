@@ -1,5 +1,5 @@
-import Parser from "tree-sitter";
-import Bash from "tree-sitter-bash";
+import type Parser from "tree-sitter";
+import { loadNativeBinding } from "./native-binding.ts";
 
 export type BashPathAccess = "read" | "cwd";
 
@@ -45,8 +45,17 @@ interface NormalizedCommand {
 	hasGlob: boolean;
 }
 
-const parser = new Parser();
-parser.setLanguage(Bash as unknown as Parser.Language);
+let parser: Parser | undefined;
+
+function bashParser(): Parser {
+	if (!parser) {
+		const ParserConstructor = loadNativeBinding("tree-sitter") as new () => Parser;
+		const Bash = loadNativeBinding("tree-sitter-bash") as unknown as Parser.Language;
+		parser = new ParserConstructor();
+		parser.setLanguage(Bash);
+	}
+	return parser;
+}
 
 const SAFE_ENV = new Set([
 	"GOEXPERIMENT",
@@ -1457,7 +1466,7 @@ function normalizeCommand(node: Parser.SyntaxNode): NormalizedCommand | null {
 export function parseStaticBashCommand(command: string): string[] | null {
 	let tree: Parser.Tree;
 	try {
-		tree = parser.parse(command);
+		tree = bashParser().parse(command);
 	} catch {
 		return null;
 	}
@@ -2442,7 +2451,7 @@ export function classifyReadOnlyBash(command: string, options: BashClassifierOpt
 	if (command.length > 10_000) return fail("Command too long for read-only analysis");
 	let tree: Parser.Tree;
 	try {
-		tree = parser.parse(command);
+		tree = bashParser().parse(command);
 	} catch {
 		return fail("Bash parser failed");
 	}
