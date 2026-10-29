@@ -3,7 +3,7 @@ import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createChildTools } from "../src/child-tools.ts";
-import { createToolWorkspace } from "./helpers.ts";
+import { createToolWorkspace, skipBlockOnWindows, WINDOWS_XARGS_REASON } from "./helpers.ts";
 
 async function workspace(t: TestContext) {
 	const { root, memoryDir, projectRoot, locksDir } = await createToolWorkspace(t, "pi-memory-boundaries-");
@@ -69,7 +69,10 @@ test("dream tools read original session directories and keep them read-only", as
 	const grep = await tools.get("grep")!.execute("sessions", { path: sessions, pattern: "SESSION_MARKER" });
 	assert.notEqual(grep.isError, true);
 	assert.match(resultText(grep), /SESSION_MARKER/);
-	for (const command of [`head -n 1 '${transcript}'`, "printf 'shared-sessions/session.jsonl\\n' | xargs head -n 1"]) {
+	const commands = [`head -n 1 '${transcript}'`];
+	if (!skipBlockOnWindows(t, WINDOWS_XARGS_REASON))
+		commands.push("printf 'shared-sessions/session.jsonl\\n' | xargs head -n 1");
+	for (const command of commands) {
 		const result = await tools.get("bash")!.execute("sessions", { command });
 		assert.notEqual(result.isError, true, resultText(result));
 		assert.match(resultText(result), /SESSION_MARKER/);
@@ -85,12 +88,14 @@ test("native Bash runs xargs and env commands without earlier calls", async (t) 
 	const env = await workspace(t);
 	await writeFile(join(env.projectRoot, "inside.md"), "project value\n");
 	await writeFile(join(env.projectRoot, "-danger.md"), "dash filename value\n");
-	for (const [index, command] of [
-		"printf 'inside.md\\n' | xargs head -n 1",
-		"printf 'value\\n' | xargs echo",
-		"env head -n 1 inside.md",
-		"printf '%s\\n' '-danger.md' | xargs head -n 1 --",
-	].entries()) {
+	const xargsCommands = skipBlockOnWindows(t, WINDOWS_XARGS_REASON)
+		? []
+		: [
+				"printf 'inside.md\\n' | xargs head -n 1",
+				"printf 'value\\n' | xargs echo",
+				"printf '%s\\n' '-danger.md' | xargs head -n 1 --",
+			];
+	for (const [index, command] of [...xargsCommands, "env head -n 1 inside.md"].entries()) {
 		const scratchDir = join(env.root, `fresh-${index}`);
 		await mkdir(scratchDir);
 		const bash = createChildTools({ ...env, mode: "extractor", scratchDir }).find((tool) => tool.name === "bash")!;
@@ -110,9 +115,11 @@ test("Bash leaves grep options and xargs input expansion to the native programs"
 	const grep = await bash.execute("grep", { command: "grep -r NATIVE_GREP_MARKER ." });
 	assert.notEqual(grep.isError, true, resultText(grep));
 	assert.match(resultText(grep), /NATIVE_GREP_MARKER/);
-	const xargs = await bash.execute("xargs", { command: "printf '../outside.md\\n' | xargs head -n 1" });
-	assert.notEqual(xargs.isError, true, resultText(xargs));
-	assert.match(resultText(xargs), /NATIVE_XARGS_MARKER/);
+	if (!skipBlockOnWindows(t, WINDOWS_XARGS_REASON)) {
+		const xargs = await bash.execute("xargs", { command: "printf '../outside.md\\n' | xargs head -n 1" });
+		assert.notEqual(xargs.isError, true, resultText(xargs));
+		assert.match(resultText(xargs), /NATIVE_XARGS_MARKER/);
+	}
 	const explicit = await bash.execute("explicit", { command: "head -n 1 ../outside.md" });
 	assert.notEqual(explicit.isError, true);
 	assert.match(resultText(explicit), /NATIVE_XARGS_MARKER/);

@@ -4,13 +4,14 @@ import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { createChildTools } from "../src/child-tools.ts";
-import { createToolWorkspace, shellPath } from "./helpers.ts";
+import { createToolWorkspace, shellPath, skipOnWindows } from "./helpers.ts";
 
 function quote(value: string): string {
 	return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 test("background Bash follows PATH order and relative entries", async (t) => {
+	if (skipOnWindows(t, "POSIX-only fixture: fake commands are shebang scripts that rely on executable bits")) return;
 	const env = await createToolWorkspace(t, "pi-memory-command-path-");
 	const first = join(env.projectRoot, "first bin");
 	const second = join(env.projectRoot, "second bin");
@@ -51,6 +52,7 @@ test("background Bash follows PATH order and relative entries", async (t) => {
 });
 
 test("background tools use executables and their helpers from arbitrary host PATH directories", async (t) => {
+	if (skipOnWindows(t, "POSIX-only fixture: helpers are executed through /bin/sh, which is unavailable")) return;
 	const { root, memoryDir, projectRoot, locksDir } = await createToolWorkspace(t, "pi-memory-host-path-");
 	const bin = join(projectRoot, "custom bin");
 	const scratchDir = join(root, "scratch");

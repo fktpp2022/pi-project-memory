@@ -11,7 +11,7 @@ import {
 	resolveProjectPaths,
 	sanitizeProjectKey,
 } from "../src/paths.ts";
-import { createTempDirectory, shellPath } from "./helpers.ts";
+import { createTempDirectory, removeTempDirectory, shellPath, skipOnWindows } from "./helpers.ts";
 
 const execFileAsync = promisify(execFile);
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -25,7 +25,7 @@ before(async () => {
 after(async () => {
 	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-	await rm(isolatedAgentDir, { recursive: true, force: true });
+	await removeTempDirectory(isolatedAgentDir);
 });
 
 test("VCS metadata detection uses exact path segments", () => {
@@ -81,6 +81,7 @@ test("default and explicitly equivalent memory roots share coordination paths", 
 });
 
 test("custom roots isolate state and share locks by canonical memory namespace", async (t) => {
+	if (skipOnWindows(t, "unprivileged directory symlinks fall back to file links, so realpath fails")) return;
 	const root = await createTempDirectory(t, "pi-memory-custom-root-");
 	const [projectOne, projectTwo] = [join(root, "one"), join(root, "two")];
 	await Promise.all([mkdir(projectOne), mkdir(projectTwo)]);
@@ -165,6 +166,7 @@ test("default namespaces do not collide when sanitized project keys do", async (
 });
 
 test("linked worktrees use the common checkout as the Claude-compatible root", async (t) => {
+	if (skipOnWindows(t, "the fake git executable is a POSIX shebang script run through /bin/sh")) return;
 	const root = await createTempDirectory(t, "pi-memory-worktree-");
 	const main = join(root, "main");
 	const linked = join(root, "linked");
@@ -201,6 +203,7 @@ test("linked worktrees use the common checkout as the Claude-compatible root", a
 });
 
 test("project path initialization keeps existing permissions and accepts a symlink memory root", async (t) => {
+	if (skipOnWindows(t, "Windows does not preserve POSIX mode bits such as 0o777")) return;
 	const root = await createTempDirectory(t, "pi-memory-symlink-root-");
 	const target = join(root, "target");
 	const memoryDir = join(root, "memory");

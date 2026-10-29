@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyReadOnlyBash } from "../src/bash-readonly.ts";
+import { skipOnWindows, WINDOWS_XARGS_REASON } from "./helpers.ts";
 
 function allows(command: string): void {
 	const result = classifyReadOnlyBash(command);
@@ -129,6 +130,10 @@ test("validates printf arithmetic operands", () => {
 	denies("printf '%d\\n' 'array[1]'");
 	denies("printf '%d\\n' 'array[$(touch /tmp/pwn)]'");
 	denies("printf '%*s' 1+1 text");
+});
+
+test("validates xargs inner-command rules", (t) => {
+	if (skipOnWindows(t, WINDOWS_XARGS_REASON)) return;
 	denies("xargs printf '%d\\n'");
 	allows("xargs printf '%s\\n'");
 	allows("xargs");
