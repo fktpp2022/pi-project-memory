@@ -6,6 +6,7 @@ import type { ProjectMemoryConfig, RoleModelConfig, SelectorModelConfig } from "
 export const DEFAULT_CONFIG: ProjectMemoryConfig = {
 	enabled: true,
 	autoMemoryDirectory: null,
+	shellPath: null,
 	models: {
 		selector: { model: "inherit", thinkingLevel: "off", maxTokens: 512, structuredOutput: true },
 		extractor: { model: "inherit", thinkingLevel: "inherit", maxTokens: "inherit" },
@@ -51,7 +52,7 @@ function boolean(value: unknown, fallback: boolean): boolean {
 	return typeof value === "boolean" ? value : fallback;
 }
 
-function autoMemoryDirectory(value: unknown): string | null {
+function optionalString(value: unknown): string | null {
 	return typeof value === "string" ? value.trim() || null : null;
 }
 
@@ -90,7 +91,8 @@ export function parseConfig(value: unknown): ProjectMemoryConfig {
 	const dream = record(raw.dream) ?? {};
 	return {
 		enabled: boolean(raw.enabled, DEFAULT_CONFIG.enabled),
-		autoMemoryDirectory: autoMemoryDirectory(raw.autoMemoryDirectory),
+		autoMemoryDirectory: optionalString(raw.autoMemoryDirectory),
+		shellPath: optionalString(raw.shellPath),
 		models: {
 			selector: selectorConfig(models.selector, DEFAULT_CONFIG.models.selector),
 			extractor: roleConfig(models.extractor, DEFAULT_CONFIG.models.extractor),

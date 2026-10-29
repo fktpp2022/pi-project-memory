@@ -1,6 +1,7 @@
 {
   "enabled": true,
   "autoMemoryDirectory": null,
+  "shellPath": null,
   "models": {
     "selector": {
       "model": "inherit",

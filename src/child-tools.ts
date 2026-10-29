@@ -17,6 +17,7 @@ import {
 import fg from "fast-glob";
 import { assertContainedMarkdown, isContainedPath, resolveToolPath, VCS_METADATA_DIRECTORIES } from "./paths.ts";
 import { prepareRestrictedBash } from "./restricted-bash.ts";
+import type { ShellAvailability } from "./shell.ts";
 import { atomicWriteIfBaseline, lintMemoryContent, safeDeleteMemoryFile, sameBaseline, sha256 } from "./store.ts";
 import type { ReadBaseline } from "./types.ts";
 
@@ -34,6 +35,8 @@ interface ToolEnvironment {
 	isProjectTrusted?: () => boolean;
 	touchedPaths: Set<string>;
 	onTouched?: (relativePath: string, hash: string | null) => void | Promise<void>;
+	/** Omitted keeps the legacy behavior (bash offered). Production callers always pass the probe result. */
+	shell?: ShellAvailability;
 }
 
 const DEFAULT_BASH_TIMEOUT_SECONDS = 120;
@@ -369,7 +372,15 @@ export function createChildTools(env: ToolEnvironment): AgentTool[] {
 		},
 	};
 
-	const nativeBashShape = createBashTool(env.cwd, { exposeSessionEnvironment: false });
+	if (env.shell && !env.shell.available) return [read, write, edit, find, grep];
+
+	// `shellCommandPrefix` is intentionally not forwarded: background bash starts
+	// from a clean shell. `shellPath` is the only shell setting honored here.
+	const shellPath = env.shell?.available ? env.shell.path : undefined;
+	const nativeBashShape = createBashTool(env.cwd, {
+		exposeSessionEnvironment: false,
+		...(shellPath ? { shellPath } : {}),
+	});
 	const bash: typeof nativeBashShape = {
 		...nativeBashShape,
 		description:
@@ -412,7 +423,10 @@ export function createChildTools(env: ToolEnvironment): AgentTool[] {
 					};
 				}
 				if (!env.scratchDir) throw new Error("Restricted Bash requires a private scratch directory");
-				const nativeBash = createBashTool(prepared.cwd, prepared.options);
+				const nativeBash = createBashTool(prepared.cwd, {
+					...prepared.options,
+					...(shellPath ? { shellPath } : {}),
+				});
 				const result = await nativeBash.execute(
 					id,
 					{ command: prepared.command, timeout: params.timeout ?? DEFAULT_BASH_TIMEOUT_SECONDS },

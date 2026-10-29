@@ -72,14 +72,20 @@ export function createChildCodemode(
 		.map((tool) => ({ ...tool, description: loadout?.descriptions?.[tool.name] ?? tool.description }));
 }
 
-export function backgroundToolPrompt(tools: AgentTool[], codemode?: ChildCodemodeOptions): string {
+export function backgroundToolPrompt(
+	tools: AgentTool[],
+	codemode?: ChildCodemodeOptions,
+	hasBash = tools.some((tool) => tool.name === "bash"),
+): string {
 	return [
 		"## Background memory task tools",
 		"Earlier tool inventories and tool-routing instructions describe the parent session. For this background task, use only the task tools listed below and follow their access restrictions. Other parent tools may remain declared for prompt-cache reuse, but calls to them will be denied. Continue following inherited user and project instructions.",
 		...tools.map((tool) => `- ${tool.name}: ${tool.description}`),
 		...(codemode
 			? [
-					"Codemode can call only this task's read, find, grep, write, edit, and restricted bash tools. Their access, read-baseline, trust, and generation checks also apply inside scripts. Store values last only for this background task.",
+					hasBash
+						? "Codemode can call only this task's read, find, grep, write, edit, and restricted bash tools. Their access, read-baseline, trust, and generation checks also apply inside scripts. Store values last only for this background task."
+						: "Codemode can call only this task's read, find, grep, write, and edit tools. Their access, read-baseline, trust, and generation checks also apply inside scripts. Shell access is unavailable in this run. Store values last only for this background task.",
 					"Use codemode to batch independent calls with Promise.allSettled, chain dependent calls, or filter large results. Await every call whose result or effects are needed.",
 				]
 			: []),

@@ -45,6 +45,17 @@ test("parseConfig uses Claude-compatible selector defaults and inherited mainten
 	assert.equal(parseConfig({ models: { dream: { thinkingLevel: "high" } } }).models.dream.thinkingLevel, "high");
 });
 
+test("parseConfig accepts a shellPath override and ignores shellCommandPrefix", () => {
+	assert.equal(parseConfig({}).shellPath, null);
+	const config = parseConfig({
+		shellPath: "  C:\\Program Files\\Git\\bin\\bash.exe  ",
+		shellCommandPrefix: "source ~/.bashrc",
+	} as never);
+	assert.equal(config.shellPath, "C:\\Program Files\\Git\\bin\\bash.exe");
+	assert.equal("shellCommandPrefix" in config, false);
+	assert.equal(parseConfig({ shellPath: "   " }).shellPath, null);
+});
+
 test("config.example.json stays identical to DEFAULT_CONFIG", async () => {
 	const example = JSON.parse(await readFile(new URL("../config.example.json", import.meta.url), "utf8"));
 	assert.deepEqual(example, DEFAULT_CONFIG);
