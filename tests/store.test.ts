@@ -15,6 +15,7 @@ import {
 	compareAndSwapLastDreamAt,
 	INDEX_CHAR_CAP,
 	INDEX_LINE_CAP,
+	isIndexFilename,
 	listOtherSessionIds,
 	memoryPathFromToolInput,
 	readIndex,
@@ -468,4 +469,22 @@ test("locks honor live owners, expose ownership loss, and release by token", asy
 	const releaseRecovered = await acquireLock(lockFile, 100);
 	assert.ok(releaseRecovered);
 	await releaseRecovered();
+});
+
+test("isIndexFilename compares MEMORY.md case-insensitively on Windows", () => {
+	assert.equal(isIndexFilename("MEMORY.md", "win32"), true);
+	assert.equal(isIndexFilename("memory.md", "win32"), true);
+	assert.equal(isIndexFilename("nested/Memory.Md", "win32"), true);
+	assert.equal(isIndexFilename("memory.md", "linux"), false);
+	assert.equal(isIndexFilename("MEMORY.md", "linux"), true);
+});
+
+test("scanTopics is case-insensitive on Windows and keeps the index out of the catalog", async (t) => {
+	const root = await createTempDirectory(t, "pi-memory-case-scan-");
+	await writeFile(join(root, "memory.md"), "# index\n");
+	await writeFile(join(root, "FOO.MD"), "---\ndescription: Upper case topic\n---\nbody\n");
+	const topics = await scanTopics(root);
+	const filenames = topics.map((topic) => topic.filename).sort();
+	assert.deepEqual(filenames, process.platform === "win32" ? ["FOO.MD"] : ["memory.md"]);
+	if (process.platform === "win32") assert.equal(await readIndex(root), "# index");
 });

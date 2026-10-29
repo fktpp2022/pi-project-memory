@@ -1,17 +1,27 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join, win32 } from "node:path";
 import test, { after, before } from "node:test";
 import { promisify } from "node:util";
 import {
+	assertBashCwdBudget,
+	assertContainedMarkdown,
+	assertLocalFixedMemoryRoot,
+	assertMemoryFilePathBudget,
+	assertMemoryPathBudget,
 	containsVcsMetadataSegment,
 	initializeProjectPaths,
+	isContainedPath,
+	isMarkdownPath,
+	normalizePathInput,
 	resolveProjectPaths,
 	sanitizeProjectKey,
+	WINDOWS_FILE_PATH_BUDGET,
+	WINDOWS_MEMORY_PATH_BUDGET,
 } from "../src/paths.ts";
-import { createTempDirectory, shellPath } from "./helpers.ts";
+import { createTempDirectory, removeTempDirectory, shellPath, skipOnWindows } from "./helpers.ts";
 
 const execFileAsync = promisify(execFile);
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -25,7 +35,7 @@ before(async () => {
 after(async () => {
 	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-	await rm(isolatedAgentDir, { recursive: true, force: true });
+	await removeTempDirectory(isolatedAgentDir);
 });
 
 test("VCS metadata detection uses exact path segments", () => {
@@ -81,6 +91,7 @@ test("default and explicitly equivalent memory roots share coordination paths", 
 });
 
 test("custom roots isolate state and share locks by canonical memory namespace", async (t) => {
+	if (skipOnWindows(t, "unprivileged directory symlinks fall back to file links, so realpath fails")) return;
 	const root = await createTempDirectory(t, "pi-memory-custom-root-");
 	const [projectOne, projectTwo] = [join(root, "one"), join(root, "two")];
 	await Promise.all([mkdir(projectOne), mkdir(projectTwo)]);
@@ -99,6 +110,7 @@ test("custom roots isolate state and share locks by canonical memory namespace",
 	await mkdir(shared);
 	const throughAlias = await resolveProjectPaths(projectTwo, alias);
 	assert.equal(first.locksDir, throughAlias.locksDir);
+	assert.equal(throughAlias.memoryDir, await realpath(shared));
 });
 
 test("namespace reservation rejects a pre-existing symlink before writing a marker", async (t) => {
@@ -165,6 +177,7 @@ test("default namespaces do not collide when sanitized project keys do", async (
 });
 
 test("linked worktrees use the common checkout as the Claude-compatible root", async (t) => {
+	if (skipOnWindows(t, "the fake git executable is a POSIX shebang script run through /bin/sh")) return;
 	const root = await createTempDirectory(t, "pi-memory-worktree-");
 	const main = join(root, "main");
 	const linked = join(root, "linked");
@@ -201,6 +214,7 @@ test("linked worktrees use the common checkout as the Claude-compatible root", a
 });
 
 test("project path initialization keeps existing permissions and accepts a symlink memory root", async (t) => {
+	if (skipOnWindows(t, "Windows does not preserve POSIX mode bits such as 0o777")) return;
 	const root = await createTempDirectory(t, "pi-memory-symlink-root-");
 	const target = join(root, "target");
 	const memoryDir = join(root, "memory");
@@ -233,4 +247,160 @@ test("project path initialization keeps existing permissions and accepts a symli
 	});
 	await writeFile(join(memoryDir, "fact.md"), "linked memory");
 	assert.equal(await readFile(join(target, "fact.md"), "utf8"), "linked memory");
+});
+
+test("normalizePathInput maps every accepted Windows form to one canonical drive path", () => {
+	const root = "C:\\pi-windows-path-fixture\\memory";
+	const cases: [string, string][] = [
+		["C:\\pi-windows-path-fixture\\memory\\a.md", `${root}\\a.md`],
+		["C:/pi-windows-path-fixture/memory/a.md", `${root}\\a.md`],
+		["/c/pi-windows-path-fixture/memory/a.md", `${root}\\a.md`],
+		["/d/pi-windows-path-fixture/memory/a.md", "D:\\pi-windows-path-fixture\\memory\\a.md"],
+		["/mnt/c/pi-windows-path-fixture/memory/a.md", `${root}\\a.md`],
+		["/cygdrive/c/pi-windows-path-fixture/memory/a.md", `${root}\\a.md`],
+		["\\\\?\\C:\\pi-windows-path-fixture\\memory\\a.md", `${root}\\a.md`],
+		["\\\\?\\UNC\\server\\share\\a.md", "\\\\server\\share\\a.md"],
+	];
+	for (const [input, expected] of cases)
+		assert.equal(normalizePathInput("D:\\project", input, "win32"), expected, input);
+	for (const input of ["~/pi-windows-path-fixture/a.md", "~\\pi-windows-path-fixture\\a.md"]) {
+		const expected = win32.join(homedir(), "pi-windows-path-fixture", "a.md");
+		assert.equal(normalizePathInput("D:\\project", input, "win32"), expected, input);
+	}
+	assert.equal(normalizePathInput("D:\\project", "~", "win32"), normalizePathInput("D:\\project", homedir(), "win32"));
+});
+
+test("normalizePathInput rejects drive-relative, variable, and stream operands", () => {
+	for (const [input, message] of [
+		["C:pi-windows-path-fixture\\a.md", /drive-relative/i],
+		["C:", /drive-relative/i],
+		["%USERPROFILE%\\pi-windows-path-fixture\\a.md", /variable/i],
+		["C:\\mem\\notes.md:stream.md", /data streams/i],
+		["C:\\mem\\a.md::$DATA", /data streams/i],
+	] as const)
+		assert.throws(() => normalizePathInput("C:\\project", input, "win32"), message, input);
+});
+
+test("normalizePathInput is a no-op for canonical POSIX paths", () => {
+	for (const path of ["/tmp/memory/a.md", "/tmp/memory", "/"])
+		assert.equal(normalizePathInput("/tmp/memory", path, "linux"), path);
+	assert.equal(normalizePathInput("/tmp/memory", "topics/a.md", "linux"), "/tmp/memory/topics/a.md");
+	assert.equal(normalizePathInput("/tmp/memory", "a.md", "linux"), "/tmp/memory/a.md");
+});
+
+test("isContainedPath case-folds Windows paths and rejects sibling prefixes", () => {
+	assert.equal(isContainedPath("C:\\memory", "c:\\MEMORY\\topics\\a.md", "win32"), true);
+	assert.equal(isContainedPath("C:\\memory", "C:/memory/topics/a.md", "win32"), true);
+	assert.equal(isContainedPath("C:\\memory", "C:\\memory", "win32"), true);
+	assert.equal(isContainedPath("C:\\memory", "C:\\memory-evil\\a.md", "win32"), false);
+	assert.equal(isContainedPath("C:\\memory", "D:\\memory\\a.md", "win32"), false);
+	assert.equal(isContainedPath("/memory", "/memory/topics/a.md", "linux"), true);
+	assert.equal(isContainedPath("/memory", "/memory-evil/a.md", "linux"), false);
+});
+
+test("the containment primitive stays lexical and case-folds on Windows", () => {
+	assert.equal(isContainedPath("/memory", "/memory/topic.md", "linux"), true);
+	assert.equal(isContainedPath("/memory", "/memory-evil/topic.md", "linux"), false);
+	assert.equal(isContainedPath("C:\\memory", "C:\\memory\\topic.md", "win32"), true);
+	assert.equal(isContainedPath("C:\\memory", "c:\\MEMORY\\topic.md", "win32"), true);
+	assert.equal(isContainedPath("C:\\memory", "C:\\memory-evil\\topic.md", "win32"), false);
+	// The comparison stays lexical; write and delete callers resolve links with
+	// realpath before consulting it, while reads may follow links like Claude.
+	assert.equal(isContainedPath("C:\\memory", "C:\\memory\\link\\secret.md", "win32"), true);
+});
+
+test("assertContainedMarkdown accepts FOO.MD on Windows and rejects ADS", () => {
+	assert.equal(assertContainedMarkdown("C:\\memory", "C:\\memory\\FOO.MD", "win32"), "C:\\memory\\FOO.MD");
+	assert.equal(assertContainedMarkdown("/memory", "/memory/topic.md", "linux"), "/memory/topic.md");
+	assert.throws(() => assertContainedMarkdown("/memory", "/memory/FOO.MD", "linux"), /\.md/);
+	assert.throws(() => assertContainedMarkdown("C:\\memory", "C:\\memory\\notes.md:stream.md", "win32"), /data streams/);
+	assert.throws(() => assertContainedMarkdown("C:\\memory", "C:\\memory-evil\\a.md", "win32"), /escapes/);
+});
+
+test("isMarkdownPath matches the index and topics case-insensitively on Windows", () => {
+	assert.equal(isMarkdownPath("FOO.MD", "win32"), true);
+	assert.equal(isMarkdownPath("MEMORY.MD", "win32"), true);
+	assert.equal(isMarkdownPath("FOO.MD", "linux"), false);
+	assert.equal(isMarkdownPath("foo.md", "linux"), true);
+});
+
+test("the Windows memory path budget is 241 characters and POSIX is unbounded", () => {
+	const within = `C:\\${"a".repeat(WINDOWS_MEMORY_PATH_BUDGET - 3)}`;
+	assert.equal(within.length, WINDOWS_MEMORY_PATH_BUDGET);
+	assert.doesNotThrow(() => assertMemoryPathBudget(within, "win32"));
+	const over = `${within}a`;
+	assert.throws(() => assertMemoryPathBudget(over, "win32"), /budget/);
+	assert.throws(() => assertMemoryPathBudget(over, "win32"), new RegExp(over.replace(/\\/g, "\\\\")));
+	assert.doesNotThrow(() => assertMemoryPathBudget(over, "linux"));
+	const longFile = `C:\\memory\\${"b".repeat(WINDOWS_FILE_PATH_BUDGET - 12)}.md`;
+	assert.equal(longFile.length, WINDOWS_FILE_PATH_BUDGET + 1);
+	assert.throws(() => assertMemoryFilePathBudget(longFile, "win32"), /budget/);
+	assert.doesNotThrow(() => assertMemoryFilePathBudget(longFile, "linux"));
+	assert.throws(() => assertBashCwdBudget(longFile, "win32"), /258/);
+	assert.doesNotThrow(() => assertBashCwdBudget(longFile, "linux"));
+});
+
+test("startup enforces the Windows memory path budget on the canonical root", async (t) => {
+	const root = await createTempDirectory(t, "pi-memory-budget-");
+	const longMemory = join(root, "m".repeat(220));
+	const paths = {
+		projectRoot: root,
+		projectKey: "budget",
+		baseDir: join(root, "state"),
+		memoryDir: longMemory,
+		stateFile: join(root, "state.json"),
+		locksDir: join(root, "locks"),
+	};
+	if (process.platform === "win32") {
+		await assert.rejects(initializeProjectPaths(paths), (error: Error) => {
+			assert.match(error.message, /budget/);
+			assert.ok(error.message.includes(longMemory));
+			return true;
+		});
+	} else await initializeProjectPaths(paths);
+});
+
+test("an existing legacy namespace is adopted instead of migrated", async (t) => {
+	const root = await createTempDirectory(t, "pi-memory-legacy-namespace-");
+	const agentDir = join(root, "agent");
+	const project = join(root, "project");
+	const alias = join(root, "project-alias");
+	await Promise.all([mkdir(project), mkdir(agentDir)]);
+	await symlink(project, alias, process.platform === "win32" ? "junction" : "dir");
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(() => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	});
+	const projectRoot = await realpath(project);
+	const canonicalKey = sanitizeProjectKey(projectRoot);
+	const legacyKey = sanitizeProjectKey(alias);
+	assert.notEqual(canonicalKey, legacyKey);
+	const projectsRoot = join(agentDir, "project-memory", "projects");
+	const legacyDir = join(projectsRoot, legacyKey);
+	await mkdir(legacyDir, { recursive: true });
+	await writeFile(join(legacyDir, ".project-root"), `${projectRoot}\n`);
+	const adopted = await resolveProjectPaths(alias);
+	assert.equal(adopted.projectKey, legacyKey);
+	assert.equal(adopted.namespaceDir, legacyDir);
+	await assert.rejects(access(join(projectsRoot, canonicalKey)), { code: "ENOENT" });
+
+	const canonicalDir = join(projectsRoot, canonicalKey);
+	await mkdir(canonicalDir);
+	await writeFile(join(canonicalDir, ".project-root"), `${projectRoot}\n`);
+	const preferred = await resolveProjectPaths(alias);
+	assert.equal(preferred.projectKey, canonicalKey);
+	assert.equal(preferred.namespaceDir, canonicalDir);
+	// Remove the junction before the recursive temp-directory teardown.
+	await rm(alias, { force: true });
+});
+
+test("the memory root policy rejects UNC and non-fixed drives at startup", async () => {
+	await assert.rejects(
+		assertLocalFixedMemoryRoot("\\\\server\\share\\memory", "win32"),
+		/memory root is not a local fixed drive/,
+	);
+	await assert.doesNotThrow(() => assertLocalFixedMemoryRoot("C:\\memory", "win32"));
+	await assert.doesNotThrow(() => assertLocalFixedMemoryRoot("/memory", "linux"));
 });

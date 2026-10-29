@@ -25,7 +25,13 @@ import {
 	sanitizeRecentMessages,
 	selectRelevantMemories,
 } from "./src/models.ts";
-import { assertContainedMarkdown, displayPath, initializeProjectPaths, resolveProjectPaths } from "./src/paths.ts";
+import {
+	assertContainedMarkdown,
+	displayPath,
+	initializeProjectPaths,
+	isContainedPath,
+	resolveProjectPaths,
+} from "./src/paths.ts";
 import {
 	dreamPrompt,
 	extractionPrompt,
@@ -905,15 +911,14 @@ async function safeMainMemoryTarget(memoryDir: string, filePath: string): Promis
 			const target = await lstat(filePath);
 			if (target.isSymbolicLink() || !target.isFile()) return false;
 			const canonicalTarget = await realpath(filePath);
-			if (canonicalTarget !== root && !canonicalTarget.startsWith(`${root}${sep}`)) return false;
+			if (!isContainedPath(root, canonicalTarget)) return false;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
 		}
 		let parent = dirname(filePath);
 		for (;;) {
 			try {
-				const canonical = await realpath(parent);
-				return canonical === root || canonical.startsWith(`${root}${sep}`);
+				return isContainedPath(root, await realpath(parent));
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
 				const next = dirname(parent);

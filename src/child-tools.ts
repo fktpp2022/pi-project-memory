@@ -15,7 +15,13 @@ import {
 	generateUnifiedPatch,
 } from "@earendil-works/pi-coding-agent";
 import fg from "fast-glob";
-import { assertContainedMarkdown, isContainedPath, resolveToolPath, VCS_METADATA_DIRECTORIES } from "./paths.ts";
+import {
+	assertContainedMarkdown,
+	assertMemoryFilePathBudget,
+	isContainedPath,
+	resolveToolPath,
+	VCS_METADATA_DIRECTORIES,
+} from "./paths.ts";
 import { prepareRestrictedBash } from "./restricted-bash.ts";
 import { atomicWriteIfBaseline, lintMemoryContent, safeDeleteMemoryFile, sameBaseline, sha256 } from "./store.ts";
 import type { ReadBaseline } from "./types.ts";
@@ -111,6 +117,7 @@ async function resolveWritablePath(
 ): Promise<string> {
 	assertChildRunAllowed(env, signal);
 	const absolute = assertContainedMarkdown(env.memoryDir, resolveToolPath(env.cwd, rawPath));
+	if (followTarget) assertMemoryFilePathBudget(absolute);
 	const canonicalMemoryRoot = await realpath(env.memoryDir);
 	const expected = resolve(canonicalMemoryRoot, relative(resolve(env.memoryDir), absolute));
 	await ensureSafeParentDirectories(canonicalMemoryRoot, dirname(expected));
@@ -137,9 +144,21 @@ async function memoryPathSet(memoryDir: string, baselines: ReadonlyMap<string, R
 		followSymbolicLinks: false,
 		dot: false,
 		unique: true,
+		caseSensitiveMatch: process.platform !== "win32",
 		ignore: VCS_METADATA_DIRECTORIES.map((directory) => `**/${directory}/**`),
 	});
 	for (const path of baselines.keys()) paths.push(relative(canonicalRoot, path).split(sep).join("/"));
+	if (process.platform === "win32") {
+		const seen = new Set<string>();
+		return new Set(
+			paths.filter((path) => {
+				const key = resolve(canonicalRoot, path).toLowerCase();
+				if (seen.has(key)) return false;
+				seen.add(key);
+				return true;
+			}),
+		);
+	}
 	return new Set(paths);
 }
 
