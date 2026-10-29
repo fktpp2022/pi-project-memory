@@ -64,6 +64,25 @@ test("index injection matches Claude text while sanitizing reserved tags and inv
 	);
 });
 
+test("no-bash prompt variants drop shell instructions and state that shell access is unavailable", () => {
+	const extraction = extractionPrompt(3, [], "/memory/root", false);
+	assert.doesNotMatch(extraction, /read-only bash|bash rm/);
+	assert.match(extraction, /Shell access is unavailable in this run/);
+
+	const dream = dreamPrompt({ memoryDir: "/memory/root" } as never, "/sessions/staged", ["session-a"], false);
+	assert.doesNotMatch(dream, /Shell access is restricted to read-only commands|restricted bash/);
+	assert.match(dream, /Shell access is unavailable in this run/);
+});
+
+test("no-bash prompt fixtures stay in sync with the runtime variant", async () => {
+	const fixture = async (name: string) => readFile(new URL(`./fixtures/prompts/${name}.txt`, import.meta.url), "utf8");
+	assert.equal(extractionPrompt(3, [], "/memory/root", false), await fixture("extraction-no-bash"));
+	assert.equal(
+		dreamPrompt({ memoryDir: "/memory/root" } as never, "/sessions/staged", ["session-a", "session-b"], false),
+		await fixture("dream-no-bash"),
+	);
+});
+
 test("runtime prompts match the fixed Claude-derived fixtures after allowed substitutions", async () => {
 	const fixture = async (name: string) => readFile(new URL(`./fixtures/prompts/${name}.txt`, import.meta.url), "utf8");
 	assert.equal(mainMemoryPrompt("/memory/root"), await fixture("main"));

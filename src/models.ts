@@ -19,6 +19,7 @@ import { convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-a
 import { backgroundToolPrompt, type ChildCodemodeOptions, createChildCodemode } from "./child-codemode.ts";
 import { createChildTools } from "./child-tools.ts";
 import { SELECTOR_SYSTEM_PROMPT, selectorCatalogMessage } from "./prompts.ts";
+import { probeShell, type ShellAvailability } from "./shell.ts";
 import type {
 	ChildRunResult,
 	MemoryRole,
@@ -518,6 +519,8 @@ export async function runChildAgent(options: {
 	onTouched?: (relativePath: string, hash: string | null) => void | Promise<void>;
 	signal?: AbortSignal;
 	ctx: ExtensionContext;
+	/** A probe taken at the start of this run. Omitted callers are probed here. */
+	shell?: ShellAvailability;
 }): Promise<ChildRunResult> {
 	const {
 		role,
@@ -536,6 +539,7 @@ export async function runChildAgent(options: {
 		ctx,
 	} = options;
 	const roleConfig = config.models[role];
+	const shell = options.shell ?? (await probeShell({ shellPath: config.shellPath }));
 	const model = resolveRoleModel(role, roleConfig, ctx);
 	const thinkingLevel = effectiveThinkingLevel(model, roleConfig.thinkingLevel, ctx.thinkingLevel);
 	const reasoningLevel = reasoning(thinkingLevel);
@@ -554,6 +558,7 @@ export async function runChildAgent(options: {
 			isProjectTrusted: () => ctx.isProjectTrusted(),
 			touchedPaths,
 			onTouched,
+			shell,
 		});
 		const maxTurns = role === "extractor" ? config.extraction.maxTurns : config.dream.maxTurns;
 		let turns = 0;
@@ -610,7 +615,7 @@ export async function runChildAgent(options: {
 					)
 				);
 			});
-		const toolPrompt = backgroundToolPrompt(tools, codemode);
+		const toolPrompt = backgroundToolPrompt(tools, codemode, shell.available);
 		messages.push(
 			...(fork
 				? structuredClone(parentContext.messages)

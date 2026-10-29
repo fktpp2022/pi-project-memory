@@ -116,6 +116,76 @@ test("background tools use Pi-native names and schemas", async (t) => {
 	]);
 });
 
+test("bash is omitted from the child tool list when no Git Bash is available", async (t) => {
+	const { memoryDir, projectRoot, locksDir } = await createToolWorkspace(t, "pi-memory-no-bash-");
+	for (const shell of [
+		{ available: false as const, reason: "not-found" as const },
+		{
+			available: false as const,
+			reason: "rejected" as const,
+			path: "C:\\Windows\\System32\\bash.exe",
+			detail: "wsl" as const,
+		},
+	]) {
+		const tools = createChildTools({
+			mode: "extractor",
+			memoryDir,
+			projectRoot,
+			cwd: projectRoot,
+			locksDir,
+			isCurrentGeneration: () => true,
+			touchedPaths: new Set(),
+			shell,
+		});
+		assert.deepEqual(
+			tools.map((tool) => tool.name),
+			["read", "write", "edit", "find", "grep"],
+		);
+	}
+});
+
+test("bash is listed when a Git Bash is available", async (t) => {
+	const { memoryDir, projectRoot, locksDir } = await createToolWorkspace(t, "pi-memory-with-bash-");
+	const tools = createChildTools({
+		mode: "extractor",
+		memoryDir,
+		projectRoot,
+		cwd: projectRoot,
+		locksDir,
+		isCurrentGeneration: () => true,
+		touchedPaths: new Set(),
+		shell: { available: true, path: "C:\\Program Files\\Git\\bin\\bash.exe" },
+	});
+	assert.deepEqual(
+		tools.map((tool) => tool.name),
+		["read", "write", "edit", "find", "grep", "bash"],
+	);
+});
+
+test("a shell removed mid-run fails only individual bash calls", async (t) => {
+	const { root, memoryDir, projectRoot, locksDir } = await createToolWorkspace(t, "pi-memory-shell-removed-");
+	const scratchDir = join(root, "scratch");
+	await mkdir(scratchDir);
+	const file = join(memoryDir, "fact.md");
+	await writeFile(file, "fact\n");
+	const tools = toolMap(
+		createChildTools({
+			mode: "extractor",
+			memoryDir,
+			projectRoot,
+			cwd: projectRoot,
+			scratchDir,
+			locksDir,
+			isCurrentGeneration: () => true,
+			touchedPaths: new Set(),
+			shell: { available: true, path: join(root, "removed", "bash.exe") },
+		}),
+	);
+	const bash = await tools.get("bash")!.execute("bash", { command: "ls" });
+	assert.equal(bash.isError, true);
+	assert.equal((await tools.get("read")!.execute("read", { path: file })).structuredContent, "fact\n");
+});
+
 test("all background tools inherit the parent cwd for both roles", async (t) => {
 	const { root, memoryDir, projectRoot, locksDir } = await createToolWorkspace(t, "pi-memory-relative-tools-");
 	// A linked worktree can live outside the canonical checkout used for memory identity.

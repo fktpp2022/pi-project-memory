@@ -37,6 +37,7 @@ import {
 	staleMemoryWarning,
 } from "./src/prompts.ts";
 import { sanitizeMemoryText } from "./src/sanitize.ts";
+import { probeShell, type ShellAvailability, shellStatusLine } from "./src/shell.ts";
 import {
 	acquireLock,
 	compareAndSwapLastDreamAt,
@@ -142,6 +143,9 @@ interface RuntimeState {
 	shutdownTimedOut: boolean;
 	selectorWarningShown: boolean;
 	recallWarningShown: boolean;
+	/** Probe result from the most recent background run, or a status-time probe. */
+	shell?: ShellAvailability;
+	shellNoticeShown: boolean;
 	lastDreamScanAt: number;
 	lastExtractionError?: string;
 	lastDreamError?: string;
@@ -221,6 +225,7 @@ export default function projectMemoryExtension(pi: ExtensionAPI) {
 			shutdownTimedOut: false,
 			selectorWarningShown: false,
 			recallWarningShown: false,
+			shellNoticeShown: false,
 			lastDreamScanAt: 0,
 			backgroundUsage,
 			compactionCursorOutcome: undefined,
@@ -689,6 +694,7 @@ export default function projectMemoryExtension(pi: ExtensionAPI) {
 			return ctx.ui.notify("Project trust was revoked; project memory is disabled", "error");
 		}
 		const command = args.trim() || "status";
+		if (command === "status") state.shell ??= await probeShell({ shellPath: state.config.shellPath });
 		if (command === "reload-config") {
 			const previous = state.config;
 			let next: ProjectMemoryConfig;
@@ -704,6 +710,7 @@ export default function projectMemoryExtension(pi: ExtensionAPI) {
 			cancelIdleTimer(state);
 			if (previous.enabled && next.enabled) invalidatePasses(state);
 			state.config = next;
+			state.shell = undefined;
 			state.memoryIndexPrompt = undefined;
 			state.parentContext = undefined;
 			state.selectorHistory.length = 0;
@@ -733,6 +740,7 @@ export default function projectMemoryExtension(pi: ExtensionAPI) {
 			return ctx.ui.notify(
 				[
 					`Project: ${ctx.cwd}`,
+					...(state.shell ? [shellStatusLine(state.shell)] : []),
 					"Auto-memory: disabled",
 					`Extraction: ${state.config.extraction.enabled ? "enabled, held by auto-memory" : "disabled"}`,
 					`Auto-dream: ${state.config.dream.enabled ? "enabled, held by auto-memory" : "disabled"}`,
@@ -1161,6 +1169,8 @@ async function scheduleExtraction(
 		if (abandoned()) return "failed";
 		const topics = await scanTopics(paths.memoryDir);
 		if (abandoned()) return "failed";
+		const shell = await refreshShell(ctx, state);
+		if (abandoned()) return "failed";
 		const recentLimit =
 			state.config.extraction.recentMessages === "inherit"
 				? Number.MAX_SAFE_INTEGER
@@ -1181,13 +1191,14 @@ async function scheduleExtraction(
 		// A resumed session can extract before before_agent_start installs these rules.
 		const pass = runChildAgent({
 			role: "extractor",
-			prompt: extractionPrompt(sourceMessageCount, topics, paths.memoryDir),
+			prompt: extractionPrompt(sourceMessageCount, topics, paths.memoryDir, shell.available),
 			sourceMessages: source,
 			systemPrompt: childSystemPrompt(ctx, paths.memoryDir),
 			parentContext: identity.config.extraction.recentMessages === "inherit" ? parentContext : undefined,
 			codemode: state.getCodemode(),
 			config: identity.config,
 			paths,
+			shell,
 			isCurrentGeneration: () => operationIsCurrent(state, ctx, identity),
 			onUsage: (usage) => addUsage(state.backgroundUsage.extractor, usage),
 			onTouched: (path, hash) => {
@@ -1305,13 +1316,14 @@ async function maybeDream(ctx: ExtensionContext, state: RuntimeState, manual: bo
 			return;
 		}
 		state.dreamAbortController = abortController;
+		const shell = await refreshShell(ctx, state);
 		const dreamSource = sanitizeRecentMessages(
 			ctx.sessionManager.buildSessionProjection().messages,
 			Number.POSITIVE_INFINITY,
 		);
 		const pass = runChildAgent({
 			role: "dream",
-			prompt: dreamPrompt(paths, sessionDir, sessionIds),
+			prompt: dreamPrompt(paths, sessionDir, sessionIds, shell.available),
 			sourceMessages: dreamSource,
 			systemPrompt: childSystemPrompt(ctx, paths.memoryDir),
 			parentContext,
@@ -1319,6 +1331,7 @@ async function maybeDream(ctx: ExtensionContext, state: RuntimeState, manual: bo
 			config: identity.config,
 			paths,
 			sessionDir,
+			shell,
 			isCurrentGeneration: () => operationIsCurrent(state, ctx, identity),
 			onUsage: (usage) => addUsage(state.backgroundUsage.dream, usage),
 			onTouched: (path, hash) => {
@@ -1558,6 +1571,20 @@ function staleMemoryToolReminder(mtimeMs: number): string {
 	return warning ? `<system-reminder>\n${warning}\n</system-reminder>` : "";
 }
 
+/**
+ * Re-probe once at the start of each background run. The tool set and prompt are
+ * frozen for that run; a missing shell only turns future runs into no-bash runs.
+ */
+async function refreshShell(ctx: ExtensionContext, state: RuntimeState): Promise<ShellAvailability> {
+	const shell = await probeShell({ shellPath: state.config.shellPath });
+	state.shell = shell;
+	if (!shell.available && !state.shellNoticeShown && ctx.mode === "tui") {
+		state.shellNoticeShown = true;
+		ctx.ui.notify(shellStatusLine(shell), "warning");
+	}
+	return shell;
+}
+
 function updateMaintenanceStatus(ctx: ExtensionContext, state: RuntimeState): void {
 	if (ctx.mode !== "tui") return;
 	if (state.panelOpen) {
@@ -1641,6 +1668,7 @@ function memoryStatusLines(state: RuntimeState, ctx: ExtensionContext, topicCoun
 	return [
 		`Project: ${state.paths?.projectRoot ?? ctx.cwd}`,
 		`Memory: ${state.paths ? displayPath(state.paths.memoryDir) : "not initialized"}`,
+		...(state.shell ? [shellStatusLine(state.shell)] : []),
 		`Topics: ${topicCount}`,
 		`Selector: ${modelStatus("selector")} (${state.config.models.selector.structuredOutput ? "native JSON Schema when supported, otherwise same-model schema tool" : "JSON Schema tool"}, ${state.config.models.selector.maxTokens} output tokens)`,
 		`Extractor: ${modelStatus("extractor")}`,

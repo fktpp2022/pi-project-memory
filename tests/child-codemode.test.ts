@@ -118,6 +118,47 @@ for (const role of ["extractor", "dream"] as const) {
 	}
 }
 
+test("background runs freeze their shell availability per run and expose the no-bash codemode text", async (t) => {
+	const { faux, ctx, paths } = await workspace(t);
+	const requested: Array<{ tools: string[]; systemPrompt: string }> = [];
+	const respond = (context: any) => {
+		requested.push({
+			tools: (context.tools ?? []).map((tool: { name: string }) => tool.name).sort(),
+			systemPrompt: context.systemPrompt ?? "",
+		});
+		return fauxAssistantMessage("done");
+	};
+	const options = {
+		role: "extractor" as const,
+		prompt: "save memories",
+		sourceMessages: [],
+		systemPrompt: "system",
+		config: structuredClone(DEFAULT_CONFIG),
+		paths,
+		ctx,
+		codemode: { mode: "on" as const },
+		isCurrentGeneration: () => true,
+	};
+
+	faux.setResponses([respond]);
+	await runChildAgent({
+		...options,
+		shell: { available: false, reason: "not-found" },
+	});
+	assert.deepEqual(requested[0]!.tools, ["codemode", "edit", "find", "grep", "read", "write"]);
+	assert.match(requested[0]!.systemPrompt, /Shell access is unavailable in this run/);
+	assert.doesNotMatch(requested[0]!.systemPrompt, /restricted bash/);
+
+	faux.setResponses([respond]);
+	await runChildAgent({
+		...options,
+		shell: { available: true, path: "C:\\Program Files\\Git\\bin\\bash.exe" },
+	});
+	assert.deepEqual(requested[1]!.tools, ["bash", "codemode", "edit", "find", "grep", "read", "write"]);
+	assert.match(requested[1]!.systemPrompt, /restricted bash/);
+	assert.doesNotMatch(requested[1]!.systemPrompt, /Shell access is unavailable/);
+});
+
 test("codemode output spill remains readable during the task and is cleaned up afterward", async (t) => {
 	const { faux, ctx, paths } = await workspace(t);
 	let spilled = "";

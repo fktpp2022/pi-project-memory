@@ -399,6 +399,38 @@ test("manual extraction reports task progress and completion even without change
 	assert.match(h.notices.at(-1)?.message ?? "", /No memory changes needed\./);
 });
 
+test("missing Git Bash disables bash, notifies once, and reports the exact status line", async (t) => {
+	const missing = join(tmpdir(), `pi-memory-missing-bash-${process.pid}-${Date.now()}.exe`);
+	const harness = await createLifecycleHarness(t, {
+		config: {
+			shellPath: missing,
+			extraction: { idleFlushSeconds: 0 },
+			dream: { enabled: true },
+		},
+	});
+	harness.context.mode = "tui";
+	const toolSets: string[][] = [];
+	const createResponse = (context: Context) => {
+		toolSets.push((context.tools ?? []).map((tool) => tool.name).sort());
+		assert.match(context.systemPrompt ?? "", /Shell access is unavailable in this run/);
+		assert.doesNotMatch(context.systemPrompt ?? "", /read-only bash/);
+		return fauxAssistantMessage("Nothing to save.");
+	};
+	harness.faux.setResponses([createResponse, createResponse]);
+	await harness.extension.commands.get("memory")?.handler("extract", harness.context);
+	await harness.extension.commands.get("memory")?.handler("dream", harness.context);
+
+	assert.deepEqual(toolSets[0], ["edit", "find", "grep", "read", "write"]);
+	const expected = `Git Bash: rejected (${missing} was not found)`;
+	assert.deepEqual(
+		harness.notices.filter((notice) => notice.message.startsWith("Git Bash:")).map((notice) => notice.message),
+		[expected],
+	);
+	harness.context.mode = "rpc";
+	await harness.extension.commands.get("memory")?.handler("status", harness.context);
+	assert.match(harness.notices.at(-1)?.message ?? "", new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
 test("Pi lifecycle hooks honor trust, inject memory prompts, and drain shutdown", async (t) => {
 	const root = await createTempDirectory(t, "pi-memory-lifecycle-");
 	const agentDir = join(root, "agent");

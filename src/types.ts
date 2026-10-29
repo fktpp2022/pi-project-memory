@@ -17,6 +17,8 @@ export interface ProjectMemoryConfig {
 	enabled: boolean;
 	/** User-global override for one project's memory directory; project files cannot set it. */
 	autoMemoryDirectory: string | null;
+	/** Explicit Git Bash path. Invalid values disable background bash instead of falling through. */
+	shellPath: string | null;
 	models: {
 		selector: SelectorModelConfig;
 		extractor: RoleModelConfig;
