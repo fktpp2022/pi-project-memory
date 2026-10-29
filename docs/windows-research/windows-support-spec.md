@@ -30,6 +30,7 @@ Scope: make `pi-project-memory` fully usable on native Windows 10/11 (x64 and ar
   - A startup preflight converts `MODULE_NOT_FOUND` / `ERR_DLOPEN_FAILED` into an actionable error naming `win32-<arch>` and the supported Node lines, then fails extension load.
   - No degradation: a broken native binding is a broken install, unlike a missing Git Bash.
 - Live `pi install` and extension-load smoke stay out of CI; they are part of the manual checklist.
+- Release gate: user-facing "supported on Windows" claims (README matrix, npm description) may only ship once the required `windows-latest` job is green on `master`. Implementation workstreams may merge earlier without the claim.
 
 ## 3. Shell and background tools
 
@@ -53,6 +54,7 @@ Every candidate is validated by `bash -c 'uname -s'`, which must match `MINGW*` 
 - `createChildTools` returns `[read, write, edit, find, grep, bash]` when a validated Git Bash exists, otherwise `[read, write, edit, find, grep]`.
 - No stub bash tool. The codemode allowlist derives from the same array.
 - Native `read`/`find`/`grep` and the extension `read`/`write`/`edit` are unaffected; recall and `/memory` keep working.
+- Known limitation: native `grep` exits 2 on ACL-denied files, so a background grep over such a tree fails the call instead of returning partial results.
 
 ### Prompt and codemode text
 
@@ -277,6 +279,19 @@ One helper and one containment predicate are used by `resolveToolPath`, `configu
 - Every claim in the privacy wording is true on both platforms.
 - `docs/windows.md` and its `.zh.md` exist and link from the four affected docs.
 - The troubleshooting table's strings match the implementation verbatim.
+
+### End-to-end
+
+Clean Windows 11 x64 VM with no prior Pi state:
+
+1. `pi install git:github.com/fktpp2022/pi-project-memory` succeeds.
+2. Start Pi in a Git repository; the first prompt recalls nothing and shows no error.
+3. `/memory extract` writes a topic and updates `MEMORY.md`.
+4. `/memory dream` completes all provider turns (not one) and sets `lastDreamAt`.
+5. `/memory status` reports `Git Bash: C:\Program Files\Git\bin\bash.exe`.
+6. Temporarily rename `C:\Program Files\Git`; the next background run exposes five tools, shows the one-time notice, and status reports `not found`.
+7. Restore Git Bash; the next background run exposes six tools again.
+8. `pi remove git:github.com/fktpp2022/pi-project-memory` removes the package entry and leaves memory files in place.
 
 ## 10. Out of scope
 
