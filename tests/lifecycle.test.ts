@@ -2095,7 +2095,11 @@ test("dream reads live session transcripts without staging or pre-parsing omitte
 	harness.faux.setResponses([
 		async (context) => {
 			assert.match(JSON.stringify(context.messages.at(-1)?.content), /approved/);
-			assert.ok(JSON.stringify(context.messages.at(-1)?.content).includes(harness.sessionDir));
+			const content = context.messages.at(-1)?.content;
+			const lastText = Array.isArray(content)
+				? content.map((block) => (block.type === "text" ? block.text : "")).join("")
+				: String(content ?? "");
+			assert.ok(lastText.includes(harness.sessionDir));
 			await writeFile(source, `${header}\nlive content\n`);
 			return fauxAssistantMessage(fauxToolCall("read", { path: source }));
 		},
