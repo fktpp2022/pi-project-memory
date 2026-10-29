@@ -28,7 +28,7 @@ import projectMemoryExtension from "../index.ts";
 import { resolveProjectPaths } from "../src/paths.ts";
 import { mainMemoryPrompt } from "../src/prompts.ts";
 import { readState } from "../src/store.ts";
-import { createTempDirectory } from "./helpers.ts";
+import { createTempDirectory, removeTempDirectory } from "./helpers.ts";
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 
@@ -125,7 +125,7 @@ async function createLifecycleHarness(
 	t.after(async () => {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		await rm(root, { recursive: true, force: true });
+		await removeTempDirectory(root);
 	});
 
 	const faux = createFauxCore({ models: [{ id: "lifecycle-model", reasoning: false }] });

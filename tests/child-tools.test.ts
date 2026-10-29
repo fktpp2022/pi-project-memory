@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { createChildTools } from "../src/child-tools.ts";
-import { createToolWorkspace } from "./helpers.ts";
+import { createToolWorkspace, skipOnWindows } from "./helpers.ts";
 
 function toolMap(tools: ReturnType<typeof createChildTools>) {
 	return new Map(tools.map((tool) => [tool.name, tool]));
@@ -370,6 +370,13 @@ test("native read, find, and grep can read outside the project and memory direct
 });
 
 test("restricted Pi-native Bash permits outside reads and denies writes", async (t) => {
+	if (
+		skipOnWindows(
+			t,
+			"POSIX-only Bash fixture: native backslash paths and xargs input do not behave the same under Git Bash",
+		)
+	)
+		return;
 	const { root, memoryDir, projectRoot, locksDir } = await createToolWorkspace(t, "pi-memory-native-bash-");
 	const scratchDir = join(root, "scratch");
 	await mkdir(scratchDir);

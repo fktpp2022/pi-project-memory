@@ -26,7 +26,7 @@ import {
 	topicCatalog,
 	truncateIndex,
 } from "../src/store.ts";
-import { createTempDirectory } from "./helpers.ts";
+import { createTempDirectory, skipOnWindows } from "./helpers.ts";
 
 test("memory tool paths follow native tilde, prefix, URL, and space normalization", () => {
 	const memoryDir = join(homedir(), ".pi", "memory");
@@ -129,6 +129,7 @@ test("snapshotMarkdown reuses unchanged hashes and detects content changes with 
 });
 
 test("topic scans and backfill retain newest topics under a low file-descriptor limit", async (t) => {
+	if (skipOnWindows(t, "bash ulimit and file-descriptor accounting are POSIX-only")) return;
 	const root = await createTempDirectory(t, "pi-memory-scan-limit-");
 	for (let index = 0; index < 300; index++) {
 		const path = join(root, `topic-${index}.md`);
@@ -153,6 +154,7 @@ test("topic scans and backfill retain newest topics under a low file-descriptor 
 });
 
 test("topic scans and backfill omit unreadable files and keep valid topics", async (t) => {
+	if (skipOnWindows(t, "chmod 000 does not make files unreadable on Windows")) return;
 	if (process.getuid?.() === 0) return t.skip("root can read files without permission");
 	const root = await createTempDirectory(t, "pi-memory-scan-read-error-");
 	const path = join(root, "unreadable.md");
@@ -174,6 +176,7 @@ test("topic scans and backfill omit unreadable files and keep valid topics", asy
 });
 
 test("topic scans return no catalog when the memory directory cannot be listed", async (t) => {
+	if (skipOnWindows(t, "chmod 000 does not make directories unlistable on Windows")) return;
 	if (process.getuid?.() === 0) return t.skip("root can list directories without permission");
 	const root = await createTempDirectory(t, "pi-memory-scan-list-error-");
 	await writeFile(join(root, "fact.md"), "Fact\n");
@@ -290,6 +293,7 @@ test("readIndex follows local private memory symlinks", async (t) => {
 });
 
 test("atomic replacement of a hard-linked entry leaves the other name unchanged", async (t) => {
+	if (skipOnWindows(t, "Windows reports 0o666 for every writable file, so 0600 mode assertions are POSIX-only")) return;
 	const root = await createTempDirectory(t, "pi-memory-atomic-");
 	const filePath = join(root, "fact.md");
 	await chmod(root, 0o700);
@@ -312,6 +316,7 @@ test("atomic replacement of a hard-linked entry leaves the other name unchanged"
 });
 
 test("new memory files publish exclusively with private permissions and no staging files", async (t) => {
+	if (skipOnWindows(t, "Windows reports 0o666 for every writable file, so 0600 mode assertions are POSIX-only")) return;
 	const root = await createTempDirectory(t, "pi-memory-exclusive-create-");
 	const filePath = join(root, "fact.md");
 	const results = await Promise.allSettled([
