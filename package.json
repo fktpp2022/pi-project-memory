@@ -57,6 +57,7 @@
   "os": [
     "darwin",
     "linux",
+    "win32",
     "android"
   ],
   "peerDependencies": {
