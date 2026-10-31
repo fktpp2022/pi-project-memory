@@ -5,9 +5,10 @@ import { join, win32 } from "node:path";
 import test from "node:test";
 import { createChildTools } from "../src/child-tools.ts";
 import { prepareRestrictedBash } from "../src/restricted-bash.ts";
-import { createToolWorkspace } from "./helpers.ts";
+import { createToolWorkspace, skipOnWindows } from "./helpers.ts";
 
 test("memory deletion parses escaped spaces, quoted concatenations, and literal special characters", async (t) => {
+	if (skipOnWindows(t, "POSIX-only: this test embeds the native backslash memoryDir unquoted into bash; Git Bash collapses unquoted backslashes, so the operands are not absolute. Forward-slash/MSYS operand forms are covered by the dedicated Windows normalization test.")) return;
 	const env = await createToolWorkspace(t, "pi-memory-rm-arguments-");
 	const bash = createChildTools({
 		...env,
